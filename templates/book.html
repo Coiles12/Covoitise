@@ -95,18 +95,18 @@
             <span class="bg-indigo-500/20 p-1 rounded text-xs">3</span> Détails
         </h3>
         <div class="space-y-3">
-            <select name="arret" class="w-full bg-gray-900 text-white p-3 rounded-xl border border-gray-700 outline-none text-sm">
+            <select name="arret" required class="w-full bg-gray-900 text-white p-3 rounded-xl border border-gray-700 outline-none text-sm">
                 {% for arret in arrets %}
                 <option value="{{ arret }}">{{ arret }}</option>
                 {% endfor %}
             </select>
-            <label class="flex items-center justify-between p-3 bg-gray-900 rounded-xl cursor-pointer border border-gray-700 hover:border-indigo-500 transition group">
+            <label id="djContainer" class="flex items-center justify-between p-3 bg-gray-900 rounded-xl cursor-pointer border border-gray-700 hover:border-indigo-500 transition group">
                 <div class="flex items-center gap-2">
                     <span class="text-lg group-hover:scale-110 transition">🎧</span>
                     <span class="font-bold text-sm text-gray-300 group-hover:text-white">Option DJ</span>
                 </div>
                 <div class="flex items-center gap-2">
-                    <span class="text-yellow-500 text-xs font-bold">+5 🪙</span>
+                    <span id="djPrice" class="text-yellow-500 text-xs font-bold">+5 🪙</span>
                     <input type="checkbox" name="dj" id="djCheckbox" onchange="calculerTotal()" class="w-5 h-5 accent-indigo-500 rounded">
                 </div>
             </label>
@@ -114,46 +114,32 @@
     </div>
 
     <button type="submit" class="w-full bg-gradient-to-r from-indigo-600 to-blue-600 hover:from-indigo-500 hover:to-blue-500 text-white py-5 rounded-2xl font-bold text-xl shadow-lg border border-indigo-500/30 transform hover:-translate-y-1 active:scale-95 transition-all duration-300 animate__animated animate__fadeInUp" style="animation-delay: 0.3s;">
-        PAYER <span id="totalPriceDisplay">10</span> 🪙
+        PAYER <span id="totalPriceDisplay">--</span> 🪙
     </button>
 </form>
 
 <script>
-    // Calcul du prix total corrigé
+    let currentBasePrice = 10;
+    
     function calculerTotal() {
-        let total = 10; // Prix de base
-        const dateInput = document.getElementById('dateInput').value;
-        
-        // Majoration jour (+2 par jour d'écart)
-        if(dateInput) {
-            const dateSelect = new Date(dateInput);
-            const now = new Date();
-            // On remet les heures à 0 pour comparer uniquement les jours
-            dateSelect.setHours(0,0,0,0);
-            now.setHours(0,0,0,0);
-            
-            const diffTime = dateSelect - now;
-            const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24)); 
-            
-            if(diffDays > 0) total += (diffDays * 2);
-        }
-
         const seat = document.getElementById('selected_seat_input').value;
         if(!seat) {
             document.getElementById('totalPriceDisplay').innerText = "--";
             return;
         }
 
-        // Siège Passager (RF) : +10 (pour faire 20 au total avec la base de 10)
+        let total = currentBasePrice; // Récupéré de l'API
+
+        // Siège Passager (RF) : +10
         if(seat === 'RF') total += 10; 
 
         // Option DJ : +5
-        if(document.getElementById('djCheckbox').checked) total += 5;
+        const djCheckbox = document.getElementById('djCheckbox');
+        if(djCheckbox && !djCheckbox.disabled && djCheckbox.checked) total += 5;
         
-        document.getElementById('totalPriceDisplay').innerText = total;
+        document.getElementById('totalPriceDisplay').innerText = Math.round(total);
     }
 
-    // Sélection du siège
     function selectSeat(id) {
         const el = document.getElementById('seat-' + id);
         if (el.classList.contains('occupied')) return;
@@ -166,7 +152,6 @@
         calculerTotal();
     }
 
-    // Vérification des horaires
     const dInput = document.getElementById('dateInput');
     const sInputs = document.querySelectorAll('.sensInput');
     const hDisplay = document.getElementById('heureDisplay');
@@ -180,11 +165,18 @@
         hDisplay.classList.add('opacity-50');
         document.getElementById('loadingSpinner').classList.remove('hidden');
         
+        // Reset
         document.querySelectorAll('.seat').forEach(s => {
             s.classList.remove('occupied', 'selected');
         });
         document.getElementById('selected_seat_input').value = "";
-        calculerTotal();
+        
+        const djCheckbox = document.getElementById('djCheckbox');
+        const djContainer = document.getElementById('djContainer');
+        const djPrice = document.getElementById('djPrice');
+        
+        djCheckbox.checked = false;
+        document.getElementById('totalPriceDisplay').innerText = "--";
         
         fetch('/api/check_horaire', {
             method: 'POST',
@@ -198,12 +190,27 @@
                 ? "text-3xl font-black text-red-400" 
                 : "text-3xl font-black text-white";
             
+            // Mise à jour des places
             if(d.occupied) {
                 d.occupied.forEach(id => {
                     const seatEl = document.getElementById('seat-' + id);
                     if(seatEl) seatEl.classList.add('occupied');
                 });
             }
+
+            // Mise à jour DJ
+            if (d.dj_taken) {
+                djCheckbox.disabled = true;
+                djContainer.classList.add('opacity-50', 'grayscale', 'cursor-not-allowed');
+                djPrice.innerText = "PRIS";
+            } else {
+                djCheckbox.disabled = false;
+                djContainer.classList.remove('opacity-50', 'grayscale', 'cursor-not-allowed');
+                djPrice.innerText = "+5 🪙";
+            }
+            
+            // Mise à jour prix de base (incluant coef et temps)
+            currentBasePrice = d.base_price;
         })
         .finally(() => {
             document.getElementById('loadingSpinner').classList.add('hidden');
