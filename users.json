@@ -2,7 +2,7 @@
     {
         "pseudo": "Gustave",
         "password": "GusLe.056",
-        "credits": 9999
+        "credits": 100
     },
     {
         "pseudo": "Mathieu",
@@ -19,4 +19,5 @@
         "password": "1234",
         "credits": 100
     }
+
 ]
