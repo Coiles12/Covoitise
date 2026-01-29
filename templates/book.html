@@ -162,10 +162,13 @@
         
         if(!dInput.value || !sVal) return;
         
+        // --- MODIF ICI : On sauvegarde le siège actuel ---
+        const previousSeat = document.getElementById('selected_seat_input').value;
+
         hDisplay.classList.add('opacity-50');
         document.getElementById('loadingSpinner').classList.remove('hidden');
         
-        // Reset
+        // Reset visuel
         document.querySelectorAll('.seat').forEach(s => {
             s.classList.remove('occupied', 'selected');
         });
@@ -190,12 +193,21 @@
                 ? "text-3xl font-black text-red-400" 
                 : "text-3xl font-black text-white";
             
-            // Mise à jour des places
+            // Mise à jour des places occupées
             if(d.occupied) {
                 d.occupied.forEach(id => {
                     const seatEl = document.getElementById('seat-' + id);
                     if(seatEl) seatEl.classList.add('occupied');
                 });
+            }
+
+            // --- MODIF ICI : Restauration du siège si toujours libre ---
+            if (previousSeat && (!d.occupied || !d.occupied.includes(previousSeat))) {
+                const seatEl = document.getElementById('seat-' + previousSeat);
+                if (seatEl) {
+                    seatEl.classList.add('selected');
+                    document.getElementById('selected_seat_input').value = previousSeat;
+                }
             }
 
             // Mise à jour DJ
@@ -211,6 +223,9 @@
             
             // Mise à jour prix de base (incluant coef et temps)
             currentBasePrice = d.base_price;
+            
+            // --- MODIF ICI : On recalcule le total ---
+            calculerTotal();
         })
         .finally(() => {
             document.getElementById('loadingSpinner').classList.add('hidden');
