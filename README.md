@@ -2,12 +2,10 @@
 Un site internet pour du covoiturage entre amis.
 
 
------
+----- **Choses à ajouter**
 
-python app.py
-ssh -R covoitise:80:127.0.0.1:5000 serveo.net
-
-- système de suggestion
-- Faire système de prix degressif (limité a 7j)
-- pouvoir annuler avec une sanction
-- modifier les titres faux
+- Confirmation de modification de mots de passe
+- Prix décroissant (+longtemps = +cher) mais limité au jour suivant, apres ça remonte
+- Systeme de prix en fonction de la demande (+De gens = +cher)
+- Enregistrer dans le json les modifications de mots de passe et apres avoir crée son mdp pas besoin de le recrée a chaque suppresion du ficher .db
+- Dj qui peu etre pris une seul fois par trajets
