@@ -31,6 +31,11 @@ USERS_FILE = "users.json"
 DEMAND_FILE = "demand_coefs.json"
 MATIERES_IGNOREES = ["Foyer", "Permanence", "Etude", "Vie de classe", "Rattrapage"]
 
+# --- PARAMETRES ECONOMIE (CALCULÉS) ---
+VALEUR_RECHARGE_HEBDO = 80   # Couvre 8 trajets "malins" (4 places / 5 personnes)
+PLAFOND_CREDITS_MAX = 160    # 2 semaines de stock
+CREDITS_DEPART = 100         # Un peu de marge au début
+
 # --- GESTION CACHE & FICHIERS ---
 CACHE_RAM = None
 DERNIERE_MODIF_CACHE = 0
@@ -78,6 +83,7 @@ def ajouter_user_au_json(pseudo, password, credits):
     return True
 
 def mettre_a_jour_mdp_json(pseudo, new_password):
+    """Met à jour le mot de passe dans le JSON pour persistance"""
     users = charger_users_json()
     found = False
     for u in users:
@@ -187,9 +193,10 @@ def get_jours_options():
 def calculer_prix_dynamique(date_str, sens, seat, option_dj):
     """
     Calcule le prix total selon les règles :
-    - J-0 / J-1 : Cher (+ urgence)
-    - J-2 : Minimum (Base)
-    - J+3 et plus : Augmente avec le temps
+    - J-0 : +10 (Urgence)
+    - J-1 : +5
+    - J-2 : +0 (Prix Base Optimum)
+    - J+3 et plus : Augmente avec le temps (+2/jour au delà de J+2)
     - Coef Admin multiplicateur
     - Siège RF (+10)
     - Option DJ (+5)
@@ -203,20 +210,19 @@ def calculer_prix_dynamique(date_str, sens, seat, option_dj):
         base = 10
         majoration_temps = 0
 
-        if delta_days <= 0:  # Jour même
-            majoration_temps = 10
+        if delta_days <= 0:  # Jour même (Urgence absolue)
+            majoration_temps = 10 
         elif delta_days == 1: # Veille
             majoration_temps = 5
         elif delta_days == 2: # Avant-veille (Le moins cher)
             majoration_temps = 0
         else: # Plus c'est loin, plus c'est cher (> 2 jours)
-            # Exemple : J+3 -> +2, J+4 -> +4, etc.
-            majoration_temps = (delta_days - 2) * 2
+            # J+3 -> +2, J+4 -> +4, etc. Limité pour ne pas exploser
+            majoration_temps = min((delta_days - 2) * 2, 14) # Plafond temps à +14
 
         prix_intermediaire = base + majoration_temps
         
         # Application du Coef Admin
-        # Sens attendu par la config admin : 'Aller' ou 'Retour' (majuscule 1ere lettre par convention interne, mais ici on gère 'aller'/'retour')
         cle_sens = "Aller" if sens.lower() == "aller" else "Retour"
         coef = get_demand_coef(date_obj, cle_sens)
         
@@ -242,7 +248,8 @@ class User(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     pseudo = db.Column(db.String(50), unique=True, index=True)
     password = db.Column(db.String(200))
-    credits = db.Column(db.Integer, default=100)
+    # Crédits par défaut mis à jour selon ton souhait
+    credits = db.Column(db.Integer, default=CREDITS_DEPART)
     first_login = db.Column(db.Boolean, default=True)
     last_refill = db.Column(db.DateTime, default=datetime(2000, 1, 1))
 
@@ -305,7 +312,9 @@ def sync_users_db():
         user_db = User.query.filter_by(pseudo=u['pseudo']).first()
         if not user_db:
             hashed_pw = generate_password_hash(u['password'])
-            db.session.add(User(pseudo=u['pseudo'], password=hashed_pw, credits=u['credits'], first_login=True))
+            # Utilisation de la constante CREDITS_DEPART si pas spécifié dans le json
+            c = u.get('credits', CREDITS_DEPART)
+            db.session.add(User(pseudo=u['pseudo'], password=hashed_pw, credits=c, first_login=True))
     
     if not User.query.filter_by(pseudo='Gustave').first():
         hashed_admin_pw = generate_password_hash('GusLe.056')
@@ -318,7 +327,12 @@ def sync_users_db():
 #           LOGIQUE VENDREDI 17H
 # ==========================================
 def check_weekly_refill(user):
+    """
+    Logique de recharge adaptée à la pénurie (4 places pour 5).
+    Donne juste assez pour 8 trajets "standards" (80 crédits).
+    """
     now = datetime.now()
+    
     jours_a_reculer = (now.weekday() - 4) % 7
     dernier_vendredi = now - timedelta(days=jours_a_reculer)
     cible_refill = dernier_vendredi.replace(hour=17, minute=0, second=0, microsecond=0)
@@ -327,16 +341,22 @@ def check_weekly_refill(user):
         cible_refill -= timedelta(days=7)
 
     if not user.last_refill or user.last_refill < cible_refill:
-        bonus = 50
-        plafond_max = 100
+        bonus = VALEUR_RECHARGE_HEBDO
+        plafond_max = PLAFOND_CREDITS_MAX
+        
         ancien_solde = user.credits
         nouveau_solde = ancien_solde + bonus
+        
         if nouveau_solde > plafond_max:
             nouveau_solde = plafond_max
+            
         user.credits = nouveau_solde
+        print(f"💰 RECHARGE : {user.pseudo} passe de {ancien_solde} à {nouveau_solde}")
+        
         user.last_refill = now
         db.session.commit()
         return True, nouveau_solde
+        
     return False, 0
 
 with app.app_context():
@@ -407,7 +427,7 @@ def setup_account():
         user.first_login = False
         db.session.commit()
         
-        # SAUVEGARDE DANS JSON POUR SURVIVRE AU RESET DB
+        # SAUVEGARDE JSON (PERSISTANCE)
         mettre_a_jour_mdp_json(user.pseudo, new_pass)
         
         flash("Compte configuré avec succès ! ✅")
@@ -518,7 +538,7 @@ def book():
         sens = request.form.get('sens')
         option_dj = 'dj' in request.form
         
-        # VALIDATION SERVEUR
+        # 1. VERIFICATION COMPLETE
         if not seat or not arret or not date_valeur or not sens:
             flash("❌ Formulaire incomplet ! Vérifie siège, date, sens et arrêt.")
             return redirect(url_for('book'))
@@ -532,20 +552,20 @@ def book():
         jours_fr = ["Lundi", "Mardi", "Mercredi", "Jeudi", "Vendredi", "Samedi", "Dimanche"]
         jour_joli = f"{jours_fr[date_obj.weekday()]} {date_obj.strftime('%d/%m')}"
         
-        # Vérif si siège déjà pris
+        # 2. VERIFICATION SIEGE DEJA PRIS
         deja_pris = Ride.query.filter_by(jour_str=jour_joli, type_trajet=sens.capitalize(), seat=seat).first()
         if deja_pris:
             flash(f"Trop tard ! Siège {seat} déjà réservé.")
             return redirect(url_for('book'))
         
-        # Vérif si DJ déjà pris
+        # 3. VERIFICATION DJ UNIQUE
         if option_dj:
             dj_pris = Ride.query.filter(Ride.jour_str==jour_joli, Ride.type_trajet==sens.capitalize(), Ride.options.contains('DJ')).first()
             if dj_pris:
                 flash("L'option DJ est déjà prise par quelqu'un d'autre !")
                 return redirect(url_for('book'))
 
-        # Calcul Prix Serveur (Source de vérité)
+        # Calcul Prix
         total, coef = calculer_prix_dynamique(date_valeur, sens, seat, option_dj)
         
         if user.credits < total:
@@ -704,9 +724,9 @@ def admin():
             flash("❌ Pseudo pris !")
         else:
             hashed_pw = generate_password_hash(mdp_final)
-            db.session.add(User(pseudo=pseudo_new, password=hashed_pw, credits=100, first_login=True))
+            db.session.add(User(pseudo=pseudo_new, password=hashed_pw, credits=CREDITS_DEPART, first_login=True))
             db.session.commit()
-            ajouter_user_au_json(pseudo_new, mdp_final, 100)
+            ajouter_user_au_json(pseudo_new, mdp_final, CREDITS_DEPART)
             flash(f"✅ {pseudo_new} créé ! MDP: {mdp_final}")
     
     toutes_les_courses = Ride.query.order_by(Ride.id.desc()).all()
@@ -714,7 +734,6 @@ def admin():
     edt_cache = charger_cache()
     edt_trie = dict(sorted(edt_cache.items()))
     users = User.query.all()
-    
     demand_coefs = charger_demand_coefs()
     
     return render_template('admin.html', 
@@ -756,7 +775,6 @@ def check_horaire():
         dj_pris = any('DJ' in t.options for t in trajets_existants)
         
         # Calcul simulation prix pour affichage frontend
-        # On calcule le prix de base pour un siège standard sans DJ
         prix_base, coef = calculer_prix_dynamique(date_valeur, sens, "XX", False)
         
     except Exception as e:
