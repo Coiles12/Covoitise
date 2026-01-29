@@ -28,6 +28,7 @@ PRONOTE_USER = "lecointre.g"
 PRONOTE_MDP = "GustaveLe@056"
 CACHE_FILE = "cache_edt.json"
 USERS_FILE = "users.json"
+DEMAND_FILE = "demand_coefs.json"
 MATIERES_IGNOREES = ["Foyer", "Permanence", "Etude", "Vie de classe", "Rattrapage"]
 
 # --- GESTION CACHE & FICHIERS ---
@@ -75,6 +76,39 @@ def ajouter_user_au_json(pseudo, password, credits):
     users.append({"pseudo": pseudo, "password": password, "credits": credits})
     sauvegarder_users_json(users)
     return True
+
+def mettre_a_jour_mdp_json(pseudo, new_password):
+    users = charger_users_json()
+    found = False
+    for u in users:
+        if u['pseudo'] == pseudo:
+            u['password'] = new_password
+            found = True
+            break
+    if found:
+        sauvegarder_users_json(users)
+    return found
+
+# --- GESTION COEFFICIENTS DEMANDE ---
+def charger_demand_coefs():
+    if os.path.exists(DEMAND_FILE):
+        try:
+            with open(DEMAND_FILE, 'r') as f:
+                return json.load(f)
+        except:
+            return {}
+    return {}
+
+def sauvegarder_demand_coefs(coefs):
+    with open(DEMAND_FILE, 'w') as f:
+        json.dump(coefs, f, indent=4)
+
+def get_demand_coef(date_obj, sens):
+    """Récupère le coef configuré pour ce jour de la semaine (0-6) et ce moment (Matin/Soir)"""
+    coefs = charger_demand_coefs()
+    jour_semaine = str(date_obj.weekday()) # 0=Lundi, 6=Dimanche
+    cle = f"{jour_semaine}_{sens}" # ex: "0_Aller" ou "3_Retour"
+    return float(coefs.get(cle, 1.0))
 
 # ==========================================
 #           PRONOTE
@@ -148,6 +182,58 @@ def get_jours_options():
     return options
 
 # ==========================================
+#           LOGIQUE PRIX
+# ==========================================
+def calculer_prix_dynamique(date_str, sens, seat, option_dj):
+    """
+    Calcule le prix total selon les règles :
+    - J-0 / J-1 : Cher (+ urgence)
+    - J-2 : Minimum (Base)
+    - J+3 et plus : Augmente avec le temps
+    - Coef Admin multiplicateur
+    - Siège RF (+10)
+    - Option DJ (+5)
+    """
+    try:
+        date_obj = datetime.strptime(date_str, "%Y-%m-%d").date()
+        today = date.today()
+        delta_days = (date_obj - today).days
+        
+        # Prix de base
+        base = 10
+        majoration_temps = 0
+
+        if delta_days <= 0:  # Jour même
+            majoration_temps = 10
+        elif delta_days == 1: # Veille
+            majoration_temps = 5
+        elif delta_days == 2: # Avant-veille (Le moins cher)
+            majoration_temps = 0
+        else: # Plus c'est loin, plus c'est cher (> 2 jours)
+            # Exemple : J+3 -> +2, J+4 -> +4, etc.
+            majoration_temps = (delta_days - 2) * 2
+
+        prix_intermediaire = base + majoration_temps
+        
+        # Application du Coef Admin
+        # Sens attendu par la config admin : 'Aller' ou 'Retour' (majuscule 1ere lettre par convention interne, mais ici on gère 'aller'/'retour')
+        cle_sens = "Aller" if sens.lower() == "aller" else "Retour"
+        coef = get_demand_coef(date_obj, cle_sens)
+        
+        prix_apres_coef = int(prix_intermediaire * coef)
+        
+        # Options fixes
+        prix_siege = 10 if seat == 'RF' else 0
+        prix_dj = 5 if option_dj else 0
+        
+        total = prix_apres_coef + prix_siege + prix_dj
+        
+        return total, coef
+    except Exception as e:
+        print(f"Erreur calcul prix: {e}")
+        return 10, 1.0
+
+# ==========================================
 #           MODÈLES DB
 # ==========================================
 ARRÊTS = ["Place de Bretagne", "Centre de Ploemeur", "Fontaine St Pierre", "Rond Point - Rue des plages", " Charles de Gaulle", "Autre"]
@@ -216,7 +302,8 @@ def archiver_trajet(ride, statut_final):
 def sync_users_db():
     users_json = charger_users_json()
     for u in users_json:
-        if not User.query.filter_by(pseudo=u['pseudo']).first():
+        user_db = User.query.filter_by(pseudo=u['pseudo']).first()
+        if not user_db:
             hashed_pw = generate_password_hash(u['password'])
             db.session.add(User(pseudo=u['pseudo'], password=hashed_pw, credits=u['credits'], first_login=True))
     
@@ -231,12 +318,7 @@ def sync_users_db():
 #           LOGIQUE VENDREDI 17H
 # ==========================================
 def check_weekly_refill(user):
-    """
-    Vérifie si l'utilisateur a reçu sa recharge du vendredi.
-    Si non : on AJOUTE 50 crédits (avec un maximum de 100 au total).
-    """
     now = datetime.now()
-    
     jours_a_reculer = (now.weekday() - 4) % 7
     dernier_vendredi = now - timedelta(days=jours_a_reculer)
     cible_refill = dernier_vendredi.replace(hour=17, minute=0, second=0, microsecond=0)
@@ -247,20 +329,14 @@ def check_weekly_refill(user):
     if not user.last_refill or user.last_refill < cible_refill:
         bonus = 50
         plafond_max = 100
-        
         ancien_solde = user.credits
         nouveau_solde = ancien_solde + bonus
-        
         if nouveau_solde > plafond_max:
             nouveau_solde = plafond_max
-            
         user.credits = nouveau_solde
-        print(f"💰 RECHARGE : {user.pseudo} passe de {ancien_solde} à {nouveau_solde}")
-        
         user.last_refill = now
         db.session.commit()
         return True, nouveau_solde
-        
     return False, 0
 
 with app.app_context():
@@ -296,22 +372,18 @@ def login():
     flash('Identifiant ou mot de passe incorrect')
     return redirect(url_for('index'))
 
-# --- NOUVELLE ROUTE : DEMANDE DE COMPTE ---
 @app.route('/request_account', methods=['POST'])
 def request_account():
     pseudo = request.form.get('pseudo')
     if pseudo:
-        # Vérif si existe déjà
         if User.query.filter_by(pseudo=pseudo).first():
             flash("Ce pseudo a déjà un compte !")
         else:
-            # Création d'un ticket 'Inscription' (user_id=0 car pas encore connecté)
             new_ticket = Ticket(user_id=0, pseudo=pseudo, type_ticket="Inscription", message="Veut rejoindre la Navette !")
             db.session.add(new_ticket)
             db.session.commit()
             flash("Demande envoyée au conducteur ! 📨")
     return redirect(url_for('index'))
-# ------------------------------------------
 
 @app.route('/setup-account', methods=['GET', 'POST'])
 def setup_account():
@@ -321,13 +393,24 @@ def setup_account():
     
     if request.method == 'POST':
         new_pass = request.form.get('new_password')
+        confirm_pass = request.form.get('confirm_password')
+        
         if len(new_pass) < 4:
-            flash("Trop court !")
+            flash("Mot de passe trop court !")
             return redirect(url_for('setup_account'))
+        
+        if new_pass != confirm_pass:
+            flash("Les mots de passe ne correspondent pas !")
+            return redirect(url_for('setup_account'))
+            
         user.password = generate_password_hash(new_pass)
         user.first_login = False
         db.session.commit()
-        flash("Compte configuré !")
+        
+        # SAUVEGARDE DANS JSON POUR SURVIVRE AU RESET DB
+        mettre_a_jour_mdp_json(user.pseudo, new_pass)
+        
+        flash("Compte configuré avec succès ! ✅")
         return redirect(url_for('dashboard'))
     return render_template('setup_account.html', user=user)
 
@@ -435,6 +518,11 @@ def book():
         sens = request.form.get('sens')
         option_dj = 'dj' in request.form
         
+        # VALIDATION SERVEUR
+        if not seat or not arret or not date_valeur or not sens:
+            flash("❌ Formulaire incomplet ! Vérifie siège, date, sens et arrêt.")
+            return redirect(url_for('book'))
+
         heure_trouvee = get_heure_depuis_cache(date_valeur, sens)
         if heure_trouvee in ["Pas de cours", "Pas de service", "Erreur Connexion", "Donnée introuvable"]:
             flash(f"Impossible : {heure_trouvee}")
@@ -444,18 +532,21 @@ def book():
         jours_fr = ["Lundi", "Mardi", "Mercredi", "Jeudi", "Vendredi", "Samedi", "Dimanche"]
         jour_joli = f"{jours_fr[date_obj.weekday()]} {date_obj.strftime('%d/%m')}"
         
+        # Vérif si siège déjà pris
         deja_pris = Ride.query.filter_by(jour_str=jour_joli, type_trajet=sens.capitalize(), seat=seat).first()
         if deja_pris:
-            flash(f"Trop tard ! Siège {seat} réservé.")
+            flash(f"Trop tard ! Siège {seat} déjà réservé.")
             return redirect(url_for('book'))
-            
-        prix_base = 10
-        delta_jours = (date_obj - date.today()).days
-        majoration_temps = delta_jours * 2
-        prix_siege = 10 if seat == 'RF' else 0
-        prix_dj = 5 if option_dj else 0
         
-        total = prix_base + majoration_temps + prix_siege + prix_dj
+        # Vérif si DJ déjà pris
+        if option_dj:
+            dj_pris = Ride.query.filter(Ride.jour_str==jour_joli, Ride.type_trajet==sens.capitalize(), Ride.options.contains('DJ')).first()
+            if dj_pris:
+                flash("L'option DJ est déjà prise par quelqu'un d'autre !")
+                return redirect(url_for('book'))
+
+        # Calcul Prix Serveur (Source de vérité)
+        total, coef = calculer_prix_dynamique(date_valeur, sens, seat, option_dj)
         
         if user.credits < total:
             flash(f"Pas assez de crédits ({total} requis)")
@@ -570,6 +661,25 @@ def edit_horaire():
         flash(f"✅ Horaire du {date_modif} mis à jour !")
     return redirect(url_for('admin'))
 
+@app.route('/admin/update_demand', methods=['POST'])
+def update_demand():
+    if 'user_id' not in session or session.get('pseudo') != 'Gustave': return redirect(url_for('index'))
+    
+    coefs = charger_demand_coefs()
+    # On itère sur les 7 jours de la semaine (0-6) et 2 créneaux (Aller/Retour)
+    for i in range(7):
+        for sens in ["Aller", "Retour"]:
+            key = f"{i}_{sens}"
+            val = request.form.get(f"coef_{key}")
+            if val:
+                try:
+                    coefs[key] = float(val)
+                except:
+                    pass
+    sauvegarder_demand_coefs(coefs)
+    flash("✅ Coefficients de demande mis à jour !")
+    return redirect(url_for('admin'))
+
 @app.route('/ticket/<int:ride_id>')
 def view_ticket(ride_id):
     if 'user_id' not in session: return redirect(url_for('index'))
@@ -604,7 +714,16 @@ def admin():
     edt_cache = charger_cache()
     edt_trie = dict(sorted(edt_cache.items()))
     users = User.query.all()
-    return render_template('admin.html', rides=toutes_les_courses, edt=edt_trie, users=users, tickets=tous_les_tickets)
+    
+    demand_coefs = charger_demand_coefs()
+    
+    return render_template('admin.html', 
+                           rides=toutes_les_courses, 
+                           edt=edt_trie, 
+                           users=users, 
+                           tickets=tous_les_tickets,
+                           demand_coefs=demand_coefs,
+                           days_names=["Lundi", "Mardi", "Mercredi", "Jeudi", "Vendredi", "Samedi", "Dimanche"])
 
 @app.route('/admin/force_update')
 def force_update():
@@ -629,12 +748,32 @@ def check_horaire():
         date_obj = datetime.strptime(date_valeur, "%Y-%m-%d").date()
         jours_fr = ["Lundi", "Mardi", "Mercredi", "Jeudi", "Vendredi", "Samedi", "Dimanche"]
         jour_joli = f"{jours_fr[date_obj.weekday()]} {date_obj.strftime('%d/%m')}"
+        
         trajets_existants = Ride.query.filter_by(jour_str=jour_joli, type_trajet=sens.capitalize()).all()
         sieges_pris = [t.seat for t in trajets_existants]
-    except:
-        sieges_pris = []
         
-    return jsonify({"status": "success", "heure": heure, "occupied": sieges_pris})
+        # Vérif si DJ pris
+        dj_pris = any('DJ' in t.options for t in trajets_existants)
+        
+        # Calcul simulation prix pour affichage frontend
+        # On calcule le prix de base pour un siège standard sans DJ
+        prix_base, coef = calculer_prix_dynamique(date_valeur, sens, "XX", False)
+        
+    except Exception as e:
+        print(e)
+        sieges_pris = []
+        dj_pris = False
+        prix_base = 10
+        coef = 1.0
+        
+    return jsonify({
+        "status": "success", 
+        "heure": heure, 
+        "occupied": sieges_pris, 
+        "dj_taken": dj_pris,
+        "base_price": prix_base,
+        "coef": coef
+    })
 
 if __name__ == '__main__':
     app.run(debug=True, host='0.0.0.0', port=5000, threaded=True)
