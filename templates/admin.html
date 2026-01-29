@@ -1,0 +1,93 @@
+{% extends "base.html" %}
+{% block content %}
+<script src="https://unpkg.com/html5-qrcode" type="text/javascript"></script>
+<div class="pb-10">
+    <h2 class="text-3xl font-bold text-center mb-8 text-indigo-400 animate__animated animate__fadeIn">🕵️‍♂️ Espace Admin</h2>
+    <div class="bg-gray-800 p-6 rounded-2xl border border-gray-600 mb-8 shadow-xl animate__animated animate__fadeInUp">
+        <h3 class="font-bold text-xl mb-4 text-white flex items-center gap-2">📸 Scanner</h3>
+        <div id="reader" width="600px" class="rounded-xl overflow-hidden mb-4 hidden bg-black"></div>
+        <div class="text-center space-y-2">
+            <button onclick="startScanner()" id="startScanBtn" class="bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-3 px-6 rounded-xl shadow-lg transition w-full md:w-auto">Lancer le Scanner Caméra</button>
+            <div id="scanResult" class="hidden p-4 rounded-xl font-bold text-lg animate-pulse"></div>
+        </div>
+    </div>
+    <div class="bg-gray-800 p-6 rounded-2xl border border-gray-600 mb-8 shadow-xl animate__animated animate__fadeInUp" style="animation-delay: 0.1s;">
+        <h3 class="font-bold text-xl mb-4 text-white">➕ Nouveau passager</h3>
+        <form action="/admin" method="POST" class="space-y-3">
+            <div class="grid grid-cols-2 gap-3">
+                <input type="text" name="new_pseudo" placeholder="Prénom" required class="w-full bg-gray-900 rounded-lg p-3 text-white border border-gray-700 outline-none focus:border-indigo-500">
+                <input type="text" name="new_password" placeholder="Mot de passe" class="w-full bg-gray-900 rounded-lg p-3 text-white border border-gray-700 outline-none focus:border-indigo-500">
+            </div>
+            <button type="submit" class="w-full bg-indigo-600 hover:bg-indigo-500 py-3 rounded-xl font-bold transition">Créer</button>
+        </form>
+    </div>
+    <div class="bg-gray-800 p-4 rounded-2xl border border-gray-600 mb-8 shadow-xl animate__animated animate__fadeInUp" style="animation-delay: 0.2s;">
+        <h3 class="font-bold text-xl mb-4 text-white">📋 Réservations</h3>
+        <div class="overflow-x-auto custom-scrollbar pb-2">
+            <table class="w-full text-left text-xs text-gray-300 min-w-[350px]">
+                <thead class="bg-gray-700 text-[10px] uppercase font-bold text-gray-400"><tr><th class="p-2">Qui ?</th><th class="p-2">Info</th><th class="p-2">Statut</th><th class="p-2 text-right">OK</th></tr></thead>
+                <tbody class="divide-y divide-gray-700">
+                    {% for r in rides %}
+                    <tr class="hover:bg-gray-700/50"><td class="p-2 font-bold text-white">{{ r.pseudo_passager }}</td><td class="p-2"><span class="block text-white font-medium truncate max-w-[80px]">{{ r.jour_str }}</span><span class="text-indigo-400 text-[10px] font-mono">{{ r.heure_trajet }} • {{ r.seat }}</span></td><td class="p-2">{% if r.est_valide %} <span class="text-green-400 font-bold border border-green-500/30 px-1 rounded bg-green-500/10">OK</span>{% else %} <span class="text-yellow-400 font-bold border border-yellow-500/30 px-1 rounded bg-yellow-500/10">ATT</span> {% endif %}</td><td class="p-2 text-right">{% if not r.est_valide %} <a href="/admin/validate_manual/{{ r.id }}" class="bg-indigo-600 px-2 py-1 rounded text-white font-bold">✔</a>{% else %} <span class="text-gray-600">-</span> {% endif %}</td></tr>
+                    {% else %}
+                    <tr><td colspan="4" class="p-4 text-center italic text-gray-500">Vide.</td></tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+    <div class="bg-gray-800 p-6 rounded-2xl border border-gray-600 mb-8 shadow-xl animate__animated animate__fadeInUp" style="animation-delay: 0.3s;">
+        <h3 class="font-bold text-xl mb-4 text-white">📬 Messages <span class="bg-indigo-600 text-xs px-2 py-1 rounded-full align-middle ml-2">{{ tickets|length }}</span></h3>
+        <div class="space-y-3 max-h-60 overflow-y-auto custom-scrollbar">
+            {% for ticket in tickets %}
+            <div class="bg-gray-700 p-3 rounded-xl border border-gray-600 flex justify-between items-start"><div><span class="font-bold text-white text-sm block">{{ ticket.pseudo }}</span><p class="text-xs text-gray-300 italic">"{{ ticket.message }}"</p></div><a href="/admin/delete_ticket/{{ ticket.id }}" class="text-gray-500 hover:text-red-500">🗑</a></div>
+            {% else %}
+            <p class="text-center text-gray-500 italic text-xs">Rien ici.</p>
+            {% endfor %}
+        </div>
+    </div>
+    <div class="text-center mb-6"><a href="/admin/force_update" class="bg-blue-600 hover:bg-blue-500 text-white font-bold py-2 px-6 rounded-xl shadow-lg transition inline-block text-sm">🔄 Update Pronote</a></div>
+    <div class="bg-gray-800 p-6 rounded-2xl border border-gray-600 mb-8 overflow-hidden animate__animated animate__fadeInUp" style="animation-delay: 0.4s;">
+        <h3 class="font-bold text-xl mb-4 text-white">📅 Horaires</h3>
+        <div class="h-48 overflow-y-auto custom-scrollbar">
+            <table class="w-full text-left text-sm text-gray-300">
+                <thead class="bg-gray-700 text-xs uppercase font-bold text-gray-400 sticky top-0"><tr><th class="p-2">J</th><th class="p-2">Aller</th><th class="p-2">Retour</th></tr></thead>
+                <tbody class="divide-y divide-gray-700">
+                    {% for date, infos in edt.items() %}
+                    <tr onclick="openEditModal('{{ date }}', '{{ infos.aller }}', '{{ infos.retour }}')" class="cursor-pointer hover:bg-gray-700/50"><td class="p-2 font-mono text-white text-xs">{{ date[5:] }}</td><td class="p-2 text-green-400 font-bold">{{ infos.aller }}</td><td class="p-2 text-red-400 font-bold">{{ infos.retour }}</td></tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+    <div class="bg-gray-800 p-6 rounded-2xl border border-gray-600 mb-8 shadow-xl animate__animated animate__fadeInUp" style="animation-delay: 0.5s;">
+        <h3 class="font-bold text-xl mb-4 text-white">👥 Passagers</h3>
+        <div class="flex flex-wrap gap-2">
+            {% for u in users %}
+            <div class="bg-gray-700 px-3 py-2 rounded-lg border border-gray-600 flex items-center gap-2 shadow-sm"><span class="font-bold text-white text-xs">{{ u.pseudo }}</span><span class="text-yellow-400 text-xs font-bold bg-gray-900 px-2 py-0.5 rounded">{{ u.credits }}</span></div>
+            {% endfor %}
+        </div>
+    </div>
+    <a href="/dashboard" class="block text-center text-indigo-400 hover:text-white text-sm pb-8">Retour au site</a>
+    <div id="editModal" class="hidden fixed inset-0 bg-black/80 z-[70] flex items-center justify-center p-4 backdrop-blur-sm">
+        <div class="bg-gray-800 w-full max-w-sm rounded-2xl p-6 border border-gray-600 shadow-2xl animate__animated animate__zoomIn">
+            <div class="flex justify-between items-center mb-6"><h3 class="font-bold text-white text-lg">Modifier le <span id="modalDateDisplay" class="text-indigo-400 font-mono"></span></h3><button onclick="document.getElementById('editModal').classList.add('hidden')" class="text-gray-400 hover:text-white">✕</button></div>
+            <form action="/admin/edit_horaire" method="POST" class="space-y-6">
+                <input type="hidden" name="date_modif" id="modalDateInput">
+                <div class="grid grid-cols-2 gap-4">
+                    <div class="space-y-2"><label class="block text-center text-xs font-bold text-gray-400 uppercase">Matin</label><input type="text" name="aller" id="modalAller" class="w-full bg-gray-900 rounded-xl p-3 text-center text-white border border-gray-700 focus:border-indigo-500 font-mono font-bold"><button type="button" onclick="setNoService('aller')" class="w-full bg-red-500/10 hover:bg-red-500 hover:text-white text-red-400 text-[10px] font-bold py-2 rounded-lg border border-red-500/20 transition">🚫 Pas de service</button></div>
+                    <div class="space-y-2"><label class="block text-center text-xs font-bold text-gray-400 uppercase">Soir</label><input type="text" name="retour" id="modalRetour" class="w-full bg-gray-900 rounded-xl p-3 text-center text-white border border-gray-700 focus:border-indigo-500 font-mono font-bold"><button type="button" onclick="setNoService('retour')" class="w-full bg-red-500/10 hover:bg-red-500 hover:text-white text-red-400 text-[10px] font-bold py-2 rounded-lg border border-red-500/20 transition">🚫 Pas de service</button></div>
+                </div>
+                <button type="submit" class="w-full bg-indigo-600 hover:bg-indigo-500 py-3 rounded-xl font-bold text-white shadow-lg transition transform active:scale-95">Valider</button>
+            </form>
+        </div>
+    </div>
+</div>
+<script>
+    let scanner;
+    function startScanner(){const res=document.getElementById('scanResult');document.getElementById('reader').classList.remove('hidden');document.getElementById('startScanBtn').classList.add('hidden');scanner=new Html5Qrcode("reader");scanner.start({facingMode:"environment"},{fps:10,qrbox:250},(txt)=>{scanner.stop();document.getElementById('reader').classList.add('hidden');document.getElementById('startScanBtn').classList.remove('hidden');checkToken(txt);}).catch(err=>{res.classList.remove('hidden');res.innerText="Erreur caméra (HTTPS requis ?)";res.classList.add('bg-red-600','text-white');document.getElementById('reader').classList.add('hidden');document.getElementById('startScanBtn').classList.remove('hidden');});}
+    function checkToken(t){const res=document.getElementById('scanResult');res.classList.remove('hidden','bg-red-600','bg-green-600');res.classList.add('bg-gray-600','text-white');res.innerText="Vérification...";fetch('/api/validate_scan',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token:t})}).then(r=>r.json()).then(d=>{if(d.status==='success'){res.classList.replace('bg-gray-600','bg-green-600');res.innerText=d.message;setTimeout(()=>location.reload(),1500);}else{res.classList.replace('bg-gray-600','bg-red-600');res.innerText=d.message;}}).catch(()=>res.innerText="Erreur réseau");}
+    function openEditModal(d,a,r){document.getElementById('modalDateDisplay').innerText=d;document.getElementById('modalDateInput').value=d;document.getElementById('modalAller').value=a;document.getElementById('modalRetour').value=r;document.getElementById('editModal').classList.remove('hidden');}
+    function setNoService(target){if(target==='aller'){document.getElementById('modalAller').value="Pas de service";}else{document.getElementById('modalRetour').value="Pas de service";}}
+</script>
+{% endblock %}
