@@ -12,9 +12,13 @@ import string
 import secrets
 import time
 from werkzeug.security import generate_password_hash, check_password_hash
+from dotenv import load_dotenv
+
+# Charge les variables du fichier .env (sécurité)
+load_dotenv()
 
 app = Flask(__name__)
-app.secret_key = "cle_super_secrete"
+app.secret_key = os.getenv("SECRET_KEY", "cle_par_defaut_insecure_si_pas_de_env")
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///covoit.db'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
@@ -24,14 +28,15 @@ db = SQLAlchemy(app)
 #           CONFIGURATION & FICHIERS
 # ==========================================
 PRONOTE_URL = "https://0560181t.index-education.net/PRONOTE/eleve.html"
-PRONOTE_USER = "lecointre.g"
-PRONOTE_MDP = "GustaveLe@056"
+PRONOTE_USER = os.getenv("PRONOTE_USER")
+PRONOTE_MDP = os.getenv("PRONOTE_MDP")
+
 CACHE_FILE = "cache_edt.json"
 USERS_FILE = "users.json"
 DEMAND_FILE = "demand_coefs.json"
 MATIERES_IGNOREES = ["Foyer", "Permanence", "Etude", "Vie de classe", "Rattrapage"]
 
-# --- PARAMETRES ECONOMIE (CALCULÉS) ---
+# --- PARAMETRES ECONOMIE ---
 VALEUR_RECHARGE_HEBDO = 80   # Couvre 8 trajets "malins" (4 places / 5 personnes)
 PLAFOND_CREDITS_MAX = 160    # 2 semaines de stock
 CREDITS_DEPART = 100         # Un peu de marge au début
@@ -123,6 +128,11 @@ def mettre_a_jour_cache_pronote():
     print("🔄 MISE À JOUR DU CACHE PRONOTE...")
     nouveau_cache = charger_cache()
     try:
+        # Vérification si les identifiants sont présents
+        if not PRONOTE_USER or not PRONOTE_MDP:
+            print("⚠️ Identifiants Pronote manquants dans le fichier .env")
+            return False
+
         client = pronotepy.Client(PRONOTE_URL, username=PRONOTE_USER, password=PRONOTE_MDP, uuid='')
         if client.logged_in:
             date_debut = date.today()
@@ -161,7 +171,7 @@ def mettre_a_jour_cache_pronote():
                 json.dump(nouveau_cache, f, indent=4)
             return True
     except Exception as e:
-        print(f"❌ Erreur: {e}")
+        print(f"❌ Erreur Pronote: {e}")
         return False
     return False
 
@@ -248,7 +258,6 @@ class User(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     pseudo = db.Column(db.String(50), unique=True, index=True)
     password = db.Column(db.String(200))
-    # Crédits par défaut mis à jour selon ton souhait
     credits = db.Column(db.Integer, default=CREDITS_DEPART)
     first_login = db.Column(db.Boolean, default=True)
     last_refill = db.Column(db.DateTime, default=datetime(2000, 1, 1))
@@ -312,7 +321,6 @@ def sync_users_db():
         user_db = User.query.filter_by(pseudo=u['pseudo']).first()
         if not user_db:
             hashed_pw = generate_password_hash(u['password'])
-            # Utilisation de la constante CREDITS_DEPART si pas spécifié dans le json
             c = u.get('credits', CREDITS_DEPART)
             db.session.add(User(pseudo=u['pseudo'], password=hashed_pw, credits=c, first_login=True))
     
