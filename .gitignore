@@ -1,3 +1,4 @@
 *.db
-*.env
+.env
+users.json
 __pycache__/
