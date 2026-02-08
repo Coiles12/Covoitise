@@ -50,16 +50,41 @@
         </form>
     </div>
 
-    <div class="bg-gray-800 p-4 rounded-2xl border border-gray-600 mb-8 shadow-xl animate__animated animate__fadeInUp" style="animation-delay: 0.2s;">
-        <h3 class="font-bold text-xl mb-4 text-white">📋 Réservations</h3>
+    <div class="bg-gray-800 p-4 rounded-2xl border border-yellow-500/30 mb-8 shadow-xl animate__animated animate__fadeInUp" style="animation-delay: 0.2s;">
+        <h3 class="font-bold text-xl mb-4 text-yellow-400">⏳ À Valider (Scanner ou Manuel)</h3>
         <div class="overflow-x-auto custom-scrollbar pb-2">
             <table class="w-full text-left text-xs text-gray-300 min-w-[350px]">
-                <thead class="bg-gray-700 text-[10px] uppercase font-bold text-gray-400"><tr><th class="p-2">Qui ?</th><th class="p-2">Info</th><th class="p-2">Statut</th><th class="p-2 text-right">OK</th></tr></thead>
+                <thead class="bg-gray-700 text-[10px] uppercase font-bold text-gray-400"><tr><th class="p-2">Qui ?</th><th class="p-2">Info</th><th class="p-2">Statut</th><th class="p-2 text-right">Action</th></tr></thead>
                 <tbody class="divide-y divide-gray-700">
-                    {% for r in rides %}
-                    <tr class="hover:bg-gray-700/50"><td class="p-2 font-bold text-white">{{ r.pseudo_passager }}</td><td class="p-2"><span class="block text-white font-medium truncate max-w-[80px]">{{ r.jour_str }}</span><span class="text-indigo-400 text-[10px] font-mono">{{ r.heure_trajet }} • {{ r.seat }}</span></td><td class="p-2">{% if r.est_valide %} <span class="text-green-400 font-bold border border-green-500/30 px-1 rounded bg-green-500/10">OK</span>{% else %} <span class="text-yellow-400 font-bold border border-yellow-500/30 px-1 rounded bg-yellow-500/10">ATT</span> {% endif %}</td><td class="p-2 text-right">{% if not r.est_valide %} <a href="/admin/validate_manual/{{ r.id }}" class="bg-indigo-600 px-2 py-1 rounded text-white font-bold">✔</a>{% else %} <span class="text-gray-600">-</span> {% endif %}</td></tr>
+                    {% for r in rides_pending %}
+                    <tr class="hover:bg-gray-700/50">
+                        <td class="p-2 font-bold text-white">{{ r.pseudo_passager }}</td>
+                        <td class="p-2"><span class="block text-white font-medium truncate max-w-[80px]">{{ r.jour_str }}</span><span class="text-indigo-400 text-[10px] font-mono">{{ r.heure_trajet }} • {{ r.seat }}</span></td>
+                        <td class="p-2"><span class="text-yellow-400 font-bold border border-yellow-500/30 px-1 rounded bg-yellow-500/10">ATTENTE</span></td>
+                        <td class="p-2 text-right"><a href="/admin/validate_manual/{{ r.id }}" class="bg-indigo-600 px-3 py-1 rounded text-white font-bold hover:bg-indigo-500">Valider ✔</a></td>
+                    </tr>
                     {% else %}
-                    <tr><td colspan="4" class="p-4 text-center italic text-gray-500">Vide.</td></tr>
+                    <tr><td colspan="4" class="p-4 text-center italic text-gray-500">Rien à valider.</td></tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <div class="bg-gray-800 p-4 rounded-2xl border border-gray-600 mb-8 shadow-xl animate__animated animate__fadeInUp" style="animation-delay: 0.25s;">
+        <h3 class="font-bold text-xl mb-4 text-green-400">✅ Historique Validé (50 derniers)</h3>
+        <div class="overflow-x-auto custom-scrollbar pb-2">
+            <table class="w-full text-left text-xs text-gray-300 min-w-[350px]">
+                <thead class="bg-gray-700 text-[10px] uppercase font-bold text-gray-400"><tr><th class="p-2">Qui ?</th><th class="p-2">Info</th><th class="p-2">Statut</th></tr></thead>
+                <tbody class="divide-y divide-gray-700">
+                    {% for r in rides_validated %}
+                    <tr class="hover:bg-gray-700/50 opacity-75">
+                        <td class="p-2 font-bold text-white">{{ r.pseudo_passager }}</td>
+                        <td class="p-2"><span class="block text-white font-medium truncate max-w-[80px]">{{ r.jour_str }}</span><span class="text-indigo-400 text-[10px] font-mono">{{ r.heure_trajet }} • {{ r.seat }}</span></td>
+                        <td class="p-2"><span class="text-green-400 font-bold border border-green-500/30 px-1 rounded bg-green-500/10">OK</span></td>
+                    </tr>
+                    {% else %}
+                    <tr><td colspan="3" class="p-4 text-center italic text-gray-500">Aucun historique.</td></tr>
                     {% endfor %}
                 </tbody>
             </table>
