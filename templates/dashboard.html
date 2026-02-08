@@ -48,6 +48,13 @@
         <div class="p-8 text-center text-gray-500 bg-gray-800/50 rounded-xl border border-dashed border-gray-700 animate__animated animate__fadeIn"><span class="text-4xl mb-2 opacity-50 block grayscale">😴</span><p class="text-sm">Pas de trajet prévu.</p></div>
         {% endfor %}
     </div>
+
+    <div class="mt-6 text-center animate__animated animate__fadeInUp" style="animation-delay: 0.4s;">
+        <a href="/history" class="inline-flex items-center gap-2 text-xs font-bold text-gray-500 hover:text-indigo-400 transition uppercase tracking-widest border-b border-transparent hover:border-indigo-400 pb-1">
+            <span>📜</span> Voir mon historique complet
+        </a>
+    </div>
+
     {% if user.pseudo == 'Gustave' %}
     <div class="mt-8 border-t border-gray-800 pt-6">
         <a href="/admin" class="flex items-center justify-center gap-2 text-indigo-400 hover:text-white uppercase tracking-widest text-xs font-bold p-3 rounded-lg hover:bg-gray-800 transition animate__animated animate__fadeInUp"><span>🔒</span> Accès Admin</a>
