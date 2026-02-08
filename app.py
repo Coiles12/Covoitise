@@ -201,16 +201,6 @@ def get_jours_options():
 #           LOGIQUE PRIX
 # ==========================================
 def calculer_prix_dynamique(date_str, sens, seat, option_dj):
-    """
-    Calcule le prix total selon les règles :
-    - J-0 : +10 (Urgence)
-    - J-1 : +5
-    - J-2 : +0 (Prix Base Optimum)
-    - J+3 et plus : Augmente avec le temps (+2/jour au delà de J+2)
-    - Coef Admin multiplicateur
-    - Siège RF (+10)
-    - Option DJ (+5)
-    """
     try:
         date_obj = datetime.strptime(date_str, "%Y-%m-%d").date()
         today = date.today()
@@ -226,9 +216,8 @@ def calculer_prix_dynamique(date_str, sens, seat, option_dj):
             majoration_temps = 5
         elif delta_days == 2: # Avant-veille (Le moins cher)
             majoration_temps = 0
-        else: # Plus c'est loin, plus c'est cher (> 2 jours)
-            # J+3 -> +2, J+4 -> +4, etc. Limité pour ne pas exploser
-            majoration_temps = min((delta_days - 2) * 2, 14) # Plafond temps à +14
+        else: 
+            majoration_temps = min((delta_days - 2) * 2, 14) 
 
         prix_intermediaire = base + majoration_temps
         
@@ -335,12 +324,7 @@ def sync_users_db():
 #           LOGIQUE VENDREDI 17H
 # ==========================================
 def check_weekly_refill(user):
-    """
-    Logique de recharge adaptée à la pénurie (4 places pour 5).
-    Donne juste assez pour 8 trajets "standards" (80 crédits).
-    """
     now = datetime.now()
-    
     jours_a_reculer = (now.weekday() - 4) % 7
     dernier_vendredi = now - timedelta(days=jours_a_reculer)
     cible_refill = dernier_vendredi.replace(hour=17, minute=0, second=0, microsecond=0)
@@ -351,16 +335,12 @@ def check_weekly_refill(user):
     if not user.last_refill or user.last_refill < cible_refill:
         bonus = VALEUR_RECHARGE_HEBDO
         plafond_max = PLAFOND_CREDITS_MAX
-        
         ancien_solde = user.credits
         nouveau_solde = ancien_solde + bonus
-        
         if nouveau_solde > plafond_max:
             nouveau_solde = plafond_max
             
         user.credits = nouveau_solde
-        print(f"💰 RECHARGE : {user.pseudo} passe de {ancien_solde} à {nouveau_solde}")
-        
         user.last_refill = now
         db.session.commit()
         return True, nouveau_solde
@@ -456,7 +436,8 @@ def dashboard():
     if a_ete_recharge:
         flash(f"📅 C'est vendredi ! Tes crédits sont rechargés (Total : {montant} 🪙)")
 
-    mes_trajets = Ride.query.filter_by(user_id=user.id).order_by(Ride.id.desc()).limit(5).all()
+    # MODIFICATION : On ne montre que les trajets NON validés
+    mes_trajets = Ride.query.filter_by(user_id=user.id, est_valide=False).order_by(Ride.id.desc()).all()
 
     now = datetime.now()
     if now.month >= 9:
@@ -510,6 +491,7 @@ def cancel_ride(ride_id):
         cout = ride.cout_total if ride.cout_total else 10
         remboursement = 0
 
+        # MODIFICATION : Logique de remboursement (Min 25%)
         if heures_restantes > 48:
             remboursement = cout
             msg = "Remboursement intégral"
@@ -520,12 +502,14 @@ def cancel_ride(ride_id):
             remboursement = int(cout * 0.50)
             msg = "Remboursement partiel (50%)"
         else:
-            remboursement = 0
-            msg = "Trop tard pour être remboursé"
+            # Même à la dernière minute, on rend 1/4 (25%)
+            remboursement = int(cout * 0.25)
+            msg = "Remboursement minimum (25%)"
 
         user.credits += remboursement
         db.session.delete(ride)
         db.session.commit()
+        # MODIFICATION : Affichage du montant remboursé
         flash(f"🚫 Trajet annulé. {msg} (+{remboursement} 🪙)")
     except Exception as e:
         print(e)
@@ -597,7 +581,9 @@ def book():
         )
         db.session.add(new_ride)
         db.session.commit()
-        return render_template('ticket.html', ride=new_ride, qr_code=encoded_qr)
+        
+        # MODIFICATION : Redirection au lieu de rendu direct pour éviter le "Refresh = Re-payer"
+        return redirect(url_for('view_ticket', ride_id=new_ride.id))
         
     return render_template('book.html', user=user, arrets=ARRÊTS, jours=get_jours_options())
 
@@ -694,7 +680,6 @@ def update_demand():
     if 'user_id' not in session or session.get('pseudo') != 'Gustave': return redirect(url_for('index'))
     
     coefs = charger_demand_coefs()
-    # On itère sur les 7 jours de la semaine (0-6) et 2 créneaux (Aller/Retour)
     for i in range(7):
         for sens in ["Aller", "Retour"]:
             key = f"{i}_{sens}"
@@ -737,7 +722,11 @@ def admin():
             ajouter_user_au_json(pseudo_new, mdp_final, CREDITS_DEPART)
             flash(f"✅ {pseudo_new} créé ! MDP: {mdp_final}")
     
-    toutes_les_courses = Ride.query.order_by(Ride.id.desc()).all()
+    # MODIFICATION : Séparation en deux listes
+    rides_pending = Ride.query.filter_by(est_valide=False).order_by(Ride.id.desc()).all()
+    # On limite l'historique validé pour ne pas faire laguer la page admin
+    rides_validated = Ride.query.filter_by(est_valide=True).order_by(Ride.id.desc()).limit(50).all()
+    
     tous_les_tickets = Ticket.query.order_by(Ticket.id.desc()).all()
     edt_cache = charger_cache()
     edt_trie = dict(sorted(edt_cache.items()))
@@ -745,7 +734,8 @@ def admin():
     demand_coefs = charger_demand_coefs()
     
     return render_template('admin.html', 
-                           rides=toutes_les_courses, 
+                           rides_pending=rides_pending, # Modif variable
+                           rides_validated=rides_validated, # Modif variable
                            edt=edt_trie, 
                            users=users, 
                            tickets=tous_les_tickets,
@@ -800,6 +790,17 @@ def check_horaire():
         "base_price": prix_base,
         "coef": coef
     })
+
+# AJOUT : Route historique
+@app.route('/history')
+def history():
+    if 'user_id' not in session: return redirect(url_for('index'))
+    user = User.query.get(session['user_id'])
+    
+    # On récupère tout l'historique trié du plus récent au plus vieux
+    historique = History.query.filter_by(user_id=user.id).order_by(History.date_trajet.desc()).all()
+    
+    return render_template('history.html', user=user, history=historique)
 
 if __name__ == '__main__':
     app.run(debug=True, host='0.0.0.0', port=5000, threaded=True)
